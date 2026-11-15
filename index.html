@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Uno LCD Control</title>
+<title>LCD Control</title>
 <style>
   :root {
     color-scheme: dark;
@@ -57,9 +57,9 @@
 <body>
 <main>
   <header>
-    <h1>Uno LCD Control</h1>
+    <h1>LCD Control</h1>
     <span id="status" class="status" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Disconnected</span></span>
-    <button id="connect" class="primary">Connect Uno</button>
+    <button id="connect" class="primary">Connect board</button>
   </header>
 
   <div id="banner">Web Serial isn't available in this browser. Open this file in Chrome or Edge.</div>
@@ -151,7 +151,7 @@ function setLinked(linked) {
   state.linked = linked;
   el.status.classList.toggle("on", linked);
   el.statusText.textContent = linked ? "Connected" : "Disconnected";
-  el.connect.textContent = linked ? "Disconnect" : "Connect Uno";
+  el.connect.textContent = linked ? "Disconnect" : "Connect board";
   document.querySelectorAll("[data-needs-link]").forEach(b => { b.disabled = !linked; });
 }
 
@@ -232,13 +232,13 @@ async function connect() {
   state.reader = port.readable.getReader();
   readLoop(state.reader);
   el.statusText.textContent = "Starting…";
-  log("sys", "port opened; the Uno resets when a port opens, waiting for READY");
+  log("sys", "port opened; the board resets when a port opens, waiting for READY");
 
   const ready = await new Promise(resolve => {
     const t = setTimeout(() => { state.onReady = null; resolve(false); }, BOOT_TIMEOUT_MS);
     state.onReady = () => { clearTimeout(t); state.onReady = null; resolve(true); };
   });
-  if (!ready) { log("err", "no READY from the Uno: is lcd_console uploaded?"); await disconnect(); return; }
+  if (!ready) { log("err", "no READY from the board: is lcd_console uploaded?"); await disconnect(); return; }
   setLinked(true);
   log("sys", "connected");
 }
@@ -312,7 +312,7 @@ function stopClock() {
   el.clock.checked = false;
 }
 
-let clockBusy = false;   // skip a tick if the previous one is still talking to the Uno
+let clockBusy = false;   // skip a tick if the previous one is still talking to the board
 async function clockTick() {
   if (clockBusy) return;
   clockBusy = true;

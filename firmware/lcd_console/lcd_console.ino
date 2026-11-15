@@ -7,7 +7,9 @@
 //   WALK 0|1                walking-character animation off/on
 // Replies: "READY" at boot, then "OK" or "ERR <reason>".
 #include <Wire.h>
-#include <avr/pgmspace.h>
+#ifdef __AVR__
+#include <avr/pgmspace.h>  // other cores (ESP32) get PROGMEM from Arduino.h
+#endif
 #include <LiquidCrystal_I2C.h>
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
