@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uno LCD Control</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1116; --panel: #161b22; --line: #2a313c; --text: #e6edf3; --muted: #8b949e;
+    --accent: #3fb950; --accent-ink: #04210c; --danger: #f85149;
+    --lcd-bg: #7a9a2a; --lcd-ink: #1c2a0a; --lcd-off: #2a3320;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; flex: 1 1 auto; }
+  h2 { font-size: 13px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .wide { grid-column: 1 / -1; }
+  .status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
+  .status.on .dot { background: var(--accent); }
+  button, input[type=text], input[type=file]::file-selector-button {
+    font: inherit; color: var(--text); background: #21262d; border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 12px; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+  label { display: block; color: var(--muted); font-size: 13px; margin: 10px 0 4px; }
+  input[type=text] { width: 100%; font-family: ui-monospace, Consolas, monospace; }
+  .count { float: right; }
+
+  /* LCD preview */
+  .lcd { background: var(--lcd-bg); border: 4px solid #1b2108; border-radius: 8px; padding: 12px 14px;
+         font: 600 clamp(14px, 4.2vw, 24px)/1.35 ui-monospace, Consolas, monospace; color: var(--lcd-ink);
+         white-space: pre; letter-spacing: .08em; box-shadow: inset 0 0 18px rgba(0,0,0,.25); }
+  .lcd.off { background: var(--lcd-off); color: #46512f; }
+
+  canvas { width: 100%; max-width: 400px; aspect-ratio: 20 / 16; background: var(--lcd-bg); border-radius: 6px;
+           touch-action: none; cursor: crosshair; image-rendering: pixelated; display: block; }
+  .check { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  #log { height: 160px; overflow: auto; background: #0b0e13; border-radius: 8px; padding: 10px;
+         font: 12px/1.5 ui-monospace, Consolas, monospace; margin: 0; }
+  .tx { color: #79c0ff; } .rx { color: var(--accent); } .err { color: var(--danger); } .sys { color: var(--muted); }
+  #banner { display: none; background: #3d1d1d; border: 1px solid var(--danger); border-radius: 8px;
+            padding: 10px 14px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Uno LCD Control</h1>
+    <span id="status" class="status" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Disconnected</span></span>
+    <button id="connect" class="primary">Connect Uno</button>
+  </header>
+
+  <div id="banner">Web Serial isn't available in this browser. Open this file in Chrome or Edge.</div>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Display</h2>
+      <div id="lcd" class="lcd" aria-label="LCD preview"></div>
+      <label for="l0">Line 1 <span class="count" id="c0">0/16</span></label>
+      <input id="l0" type="text" maxlength="16" autocomplete="off" spellcheck="false">
+      <label for="l1">Line 2 <span class="count" id="c1">0/16</span></label>
+      <input id="l1" type="text" maxlength="16" autocomplete="off" spellcheck="false">
+      <div class="row">
+        <button id="sendText" class="primary" data-needs-link>Send text</button>
+        <button id="clear" data-needs-link>Clear</button>
+        <button id="backlight" data-needs-link aria-pressed="true">Backlight: on</button>
+        <label class="check" style="margin:0"><input id="clock" type="checkbox" data-needs-link> Live clock</label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Pixel art (20×16)</h2>
+      <canvas id="pix" width="400" height="320" aria-label="Pixel editor"></canvas>
+      <div class="row">
+        <button id="sendPix" class="primary" data-needs-link>Send to LCD</button>
+        <button id="pixClear">Clear</button>
+        <button id="pixInvert">Invert</button>
+        <button id="pixInvader">Invader</button>
+      </div>
+      <div class="row">
+        <input id="file" type="file" accept="image/*" aria-label="Import image">
+        <label class="check" style="margin:0">Threshold <input id="thr" type="range" min="0" max="255" value="128"></label>
+      </div>
+      <p class="sys" style="margin:10px 0 0;font-size:12px">The LCD has 8 custom characters, so the image is limited to 20×16 pixels.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Animation</h2>
+      <p style="margin-top:0">A pixel-art character walks back and forth across the screen.</p>
+      <div class="row">
+        <button id="walk" class="primary" data-needs-link aria-pressed="false">Start walker</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Serial log</h2>
+      <pre id="log" aria-live="off"></pre>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const BAUD = 115200;
+const REPLY_TIMEOUT_MS = 2500;
+const BOOT_TIMEOUT_MS = 4000;
+const GRID_W = 20, GRID_H = 16, TILE_W = 5, TILE_H = 8, TILES_X = 4;
+const INVADER = ["...#..#...", "..######..", ".########.", "##.####.##",
+                 "##########", "#.######.#", "#.#....#.#", "...##.##..."];
+
+const $ = id => document.getElementById(id);
+const el = { status: $("status"), statusText: $("statusText"), connect: $("connect"), banner: $("banner"),
+  lcd: $("lcd"), l0: $("l0"), l1: $("l1"), c0: $("c0"), c1: $("c1"), sendText: $("sendText"),
+  clear: $("clear"), backlight: $("backlight"), clock: $("clock"), pix: $("pix"), walk: $("walk"),
+  log: $("log"), file: $("file"), thr: $("thr") };
+
+const state = { port: null, writer: null, reader: null, linked: false, pending: null,
+                lines: ["", ""], backlightOn: true, walking: false, clockTimer: null,
+                sendChain: Promise.resolve(), onReady: null };
+
+/* ---------- log ---------- */
+function log(kind, text) {
+  const line = document.createElement("div");
+  line.className = kind;
+  line.textContent = (kind === "tx" ? "> " : kind === "rx" ? "< " : "· ") + text;
+  el.log.appendChild(line);
+  while (el.log.childNodes.length > 200) el.log.removeChild(el.log.firstChild);
+  el.log.scrollTop = el.log.scrollHeight;
+}
+
+/* ---------- LCD preview ---------- */
+function renderLcd() {
+  el.lcd.classList.toggle("off", !state.backlightOn);
+  el.lcd.textContent = state.walking ? "  (walker running\n   on the device)"
+                                     : state.lines.map(l => l.padEnd(16)).join("\n");
+}
+
+function setLinked(linked) {
+  state.linked = linked;
+  el.status.classList.toggle("on", linked);
+  el.statusText.textContent = linked ? "Connected" : "Disconnected";
+  el.connect.textContent = linked ? "Disconnect" : "Connect Uno";
+  document.querySelectorAll("[data-needs-link]").forEach(b => { b.disabled = !linked; });
+}
+
+/* ---------- serial transport: stop-and-wait, one command in flight ---------- */
+function onLine(text) {
+  log(text.startsWith("ERR") ? "err" : "rx", text);
+  if (text === "READY" && state.onReady) { state.onReady(); return; }
+  if (state.pending && (text === "OK" || text.startsWith("ERR"))) {
+    const { resolve } = state.pending;
+    state.pending = null;
+    resolve(text);
+  }
+}
+
+async function readLoop(reader) {
+  const decoder = new TextDecoder();
+  let carry = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      carry += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = carry.indexOf("\n")) >= 0) {
+        const line = carry.slice(0, nl).trim();
+        carry = carry.slice(nl + 1);
+        if (line) onLine(line);
+      }
+    }
+  } catch (e) {
+    log("err", "read error: " + e.message);   // e.g. cable unplugged
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// Resolves with the device reply ("OK" / "ERR ..."), or rejects on timeout or disconnect.
+function sendCommand(cmd) {
+  const run = () => new Promise(async (resolve, reject) => {
+    if (!state.writer) return reject(new Error("not connected"));
+    const timer = setTimeout(() => { state.pending = null; reject(new Error("no reply to " + cmd.slice(0, 12))); },
+                             REPLY_TIMEOUT_MS);
+    state.pending = { resolve: r => { clearTimeout(timer); resolve(r); } };
+    try {
+      log("tx", cmd.length > 40 ? cmd.slice(0, 37) + "..." : cmd);
+      await state.writer.write(new TextEncoder().encode(cmd + "\n"));
+    } catch (e) {
+      clearTimeout(timer); state.pending = null; reject(e);
+    }
+  });
+  const next = state.sendChain.then(run, run);
+  state.sendChain = next.catch(() => {});
+  return next;
+}
+
+async function command(cmd) {
+  try {
+    const reply = await sendCommand(cmd);
+    return reply === "OK";
+  } catch (e) {
+    log("err", e.message);
+    return false;
+  }
+}
+
+/* ---------- connect / disconnect ---------- */
+async function connect() {
+  let port;
+  try { port = await navigator.serial.requestPort(); } catch { return; }   // user closed the chooser
+  try {
+    await port.open({ baudRate: BAUD });
+  } catch (e) {
+    log("err", "could not open port (is another program using it?): " + e.message);
+    return;
+  }
+  state.port = port;
+  state.writer = port.writable.getWriter();
+  state.reader = port.readable.getReader();
+  readLoop(state.reader);
+  el.statusText.textContent = "Starting…";
+  log("sys", "port opened; the Uno resets when a port opens, waiting for READY");
+
+  const ready = await new Promise(resolve => {
+    const t = setTimeout(() => { state.onReady = null; resolve(false); }, BOOT_TIMEOUT_MS);
+    state.onReady = () => { clearTimeout(t); state.onReady = null; resolve(true); };
+  });
+  if (!ready) { log("err", "no READY from the Uno: is lcd_console uploaded?"); await disconnect(); return; }
+  setLinked(true);
+  log("sys", "connected");
+}
+
+async function disconnect() {
+  stopClock();
+  setLinked(false);
+  state.walking = false;
+  el.walk.textContent = "Start walker";
+  el.walk.setAttribute("aria-pressed", "false");
+  const { reader, writer, port } = state;
+  state.reader = state.writer = state.port = null;
+  state.pending = null;
+  try { await reader?.cancel(); } catch {}
+  try { writer?.releaseLock(); } catch {}
+  try { await port?.close(); } catch {}
+  renderLcd();
+  log("sys", "disconnected");
+}
+
+/* ---------- display controls ---------- */
+const clean = s => s.replace(/[^\x20-\x7E]/g, "?").slice(0, 16);   // LCD ROM is ASCII only
+
+async function setRow(row, text) {
+  const t = clean(text);
+  if (await command(`L${row} ${t}`)) { state.lines[row] = t; renderLcd(); return true; }
+  return false;
+}
+
+async function sendText() {
+  if (state.walking) await setWalker(false);
+  await setRow(0, el.l0.value);
+  await setRow(1, el.l1.value);
+}
+
+async function clearScreen() {
+  stopClock();
+  if (await command("CLR")) {
+    state.lines = ["", ""]; state.walking = false; setWalkerButton(); renderLcd();
+  }
+}
+
+async function toggleBacklight() {
+  const next = !state.backlightOn;
+  if (await command(`BL ${next ? 1 : 0}`)) {
+    state.backlightOn = next;
+    el.backlight.textContent = "Backlight: " + (next ? "on" : "off");
+    el.backlight.setAttribute("aria-pressed", String(next));
+    renderLcd();
+  }
+}
+
+function setWalkerButton() {
+  el.walk.textContent = state.walking ? "Stop walker" : "Start walker";
+  el.walk.setAttribute("aria-pressed", String(state.walking));
+}
+
+async function setWalker(on) {
+  if (on) stopClock();
+  if (await command(`WALK ${on ? 1 : 0}`)) {
+    state.walking = on;
+    if (!on) state.lines = ["", ""];   // the device clears the screen when the walker stops
+    setWalkerButton(); renderLcd();
+  }
+}
+
+/* ---------- live clock ---------- */
+function stopClock() {
+  clearInterval(state.clockTimer);
+  state.clockTimer = null;
+  el.clock.checked = false;
+}
+
+let clockBusy = false;   // skip a tick if the previous one is still talking to the Uno
+async function clockTick() {
+  if (clockBusy) return;
+  clockBusy = true;
+  const now = new Date();
+  await setRow(0, "  " + now.toLocaleTimeString("en-GB"));
+  await setRow(1, " " + now.toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }));
+  clockBusy = false;
+}
+
+async function toggleClock() {
+  if (!el.clock.checked) { stopClock(); return; }
+  if (state.walking) await setWalker(false);
+  clockTick();
+  state.clockTimer = setInterval(clockTick, 1000);
+}
+
+/* ---------- pixel editor ---------- */
+const grid = Array.from({ length: GRID_H }, () => new Array(GRID_W).fill(false));
+const ctx = el.pix.getContext("2d");
+const CELL = el.pix.width / GRID_W;
+
+function drawGrid() {
+  const css = getComputedStyle(document.documentElement);
+  ctx.fillStyle = css.getPropertyValue("--lcd-bg");
+  ctx.fillRect(0, 0, el.pix.width, el.pix.height);
+  for (let y = 0; y < GRID_H; y++)
+    for (let x = 0; x < GRID_W; x++)
+      if (grid[y][x]) { ctx.fillStyle = css.getPropertyValue("--lcd-ink"); ctx.fillRect(x * CELL, y * CELL, CELL, CELL); }
+  // thin lines: pixel grid, with stronger lines at the 5x8 character-cell borders
+  for (let x = 0; x <= GRID_W; x++) { ctx.fillStyle = x % TILE_W ? "rgba(0,0,0,.12)" : "rgba(0,0,0,.4)"; ctx.fillRect(x * CELL - 0.5, 0, 1, el.pix.height); }
+  for (let y = 0; y <= GRID_H; y++) { ctx.fillStyle = y % TILE_H ? "rgba(0,0,0,.12)" : "rgba(0,0,0,.4)"; ctx.fillRect(0, y * CELL - 0.5, el.pix.width, 1); }
+}
+
+function cellAt(ev) {
+  const r = el.pix.getBoundingClientRect();
+  const x = Math.floor((ev.clientX - r.left) / r.width * GRID_W);
+  const y = Math.floor((ev.clientY - r.top) / r.height * GRID_H);
+  return x >= 0 && x < GRID_W && y >= 0 && y < GRID_H ? { x, y } : null;
+}
+
+let paintValue = null;   // value being painted during a drag, decided by the first cell touched
+el.pix.addEventListener("pointerdown", ev => {
+  const c = cellAt(ev);
+  if (!c) return;
+  el.pix.setPointerCapture(ev.pointerId);
+  paintValue = !grid[c.y][c.x];
+  grid[c.y][c.x] = paintValue;
+  drawGrid();
+});
+el.pix.addEventListener("pointermove", ev => {
+  if (paintValue === null) return;
+  const c = cellAt(ev);
+  if (c && grid[c.y][c.x] !== paintValue) { grid[c.y][c.x] = paintValue; drawGrid(); }
+});
+["pointerup", "pointercancel"].forEach(t => el.pix.addEventListener(t, () => { paintValue = null; }));
+
+function gridToHex() {
+  const tiles = Array.from({ length: 8 }, () => new Array(TILE_H).fill(0));
+  for (let y = 0; y < GRID_H; y++)
+    for (let x = 0; x < GRID_W; x++)
+      if (grid[y][x]) tiles[(y >> 3) * TILES_X + Math.floor(x / TILE_W)][y % TILE_H] |= 1 << (TILE_W - 1 - x % TILE_W);
+  return tiles.flat().map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+function setGrid(fn) {
+  for (let y = 0; y < GRID_H; y++) for (let x = 0; x < GRID_W; x++) grid[y][x] = fn(x, y);
+  drawGrid();
+}
+
+async function sendPixels() {
+  stopClock();
+  if (state.walking) await setWalker(false);
+  if (await command("PIX " + gridToHex())) {
+    state.lines = ["", ""]; renderLcd();
+  }
+}
+
+let importedImage = null;
+function convertImage() {
+  if (!importedImage) return;
+  const c = document.createElement("canvas");
+  c.width = GRID_W; c.height = GRID_H;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.fillStyle = "#fff"; g.fillRect(0, 0, GRID_W, GRID_H);
+  const scale = Math.min(GRID_W / importedImage.width, GRID_H / importedImage.height);
+  const w = importedImage.width * scale, h = importedImage.height * scale;
+  g.drawImage(importedImage, (GRID_W - w) / 2, (GRID_H - h) / 2, w, h);
+  const data = g.getImageData(0, 0, GRID_W, GRID_H).data;
+  const thr = Number(el.thr.value);
+  setGrid((x, y) => {
+    const i = (y * GRID_W + x) * 4;
+    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    return data[i + 3] > 0 && lum < thr;   // dark pixels light up
+  });
+}
+
+el.file.addEventListener("change", () => {
+  const f = el.file.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => { importedImage = img; convertImage(); URL.revokeObjectURL(url); };
+  img.onerror = () => { log("err", "could not read that image"); URL.revokeObjectURL(url); };
+  img.src = url;
+});
+el.thr.addEventListener("input", convertImage);
+
+/* ---------- wiring ---------- */
+$("pixClear").onclick = () => setGrid(() => false);
+$("pixInvert").onclick = () => setGrid((x, y) => !grid[y][x]);
+$("pixInvader").onclick = () => setGrid((x, y) => INVADER[y >> 1][x >> 1] === "#");
+$("sendPix").onclick = sendPixels;
+el.sendText.onclick = sendText;
+el.clear.onclick = clearScreen;
+el.backlight.onclick = toggleBacklight;
+el.walk.onclick = () => setWalker(!state.walking);
+el.clock.onchange = toggleClock;
+el.connect.onclick = () => (state.linked ? disconnect() : connect());
+[["l0", "c0"], ["l1", "c1"]].forEach(([i, c]) => {
+  el[i].addEventListener("input", () => { el[c].textContent = el[i].value.length + "/16"; });
+  el[i].addEventListener("keydown", ev => { if (ev.key === "Enter" && state.linked) sendText(); });
+});
+
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("disconnect", () => { if (state.linked) { log("err", "device unplugged"); disconnect(); } });
+} else {
+  el.banner.style.display = "block";
+  el.connect.disabled = true;
+}
+
+setLinked(false);
+renderLcd();
+drawGrid();
+</script>
+</body>
+</html>
